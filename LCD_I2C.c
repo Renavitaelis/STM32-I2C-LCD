@@ -14,19 +14,10 @@ void LCD_Send(I2C_LCD_Handler *lcd, uint8_t CMD_Or_Txt, LCD_Type_Of_Data Type)
     	Data_Buffer[Data_Pulse] =
         ( ( (CMD_Or_Txt << (0x04 & Data_Pulse<<1) ) & 0xF0 ) | //- Changes Between The High ^ Low Nibble Of The CMD_Or_Txt
         ((lcd->AddressAndBl&LCD_Backlight_Mask)<<3) | //- Backlight State
-        (((Data_Pulse&0x01)^0x01)<<2) | //- Changes Between High & Low On En Pin
+        (((Data_Pulse&0x01)^0x01)<<2) | //- Changes En Pin Between High ^ Low
         (Type&LCD_RS_On) ); //- Defines If The CMD_Or_Txt Is A Command Or A Text
 
     LCD_Write_Bus(lcd, Data_Buffer, sizeof(Data_Buffer));
-}
-
-void LCD_Set_Backlight(I2C_LCD_Handler *lcd, uint8_t mode)
-{
-    lcd->AddressAndBl = (lcd->AddressAndBl & LCD_Address_Mask) | (mode & LCD_Backlight_Mask);
-
-    uint8_t BL_Updater = mode & LCD_Backlight_Mask;
-
-    LCD_Write_Bus(lcd, &BL_Updater, sizeof(BL_Updater));
 }
 
 //- Useful For Most Cases, Create More As Needed
@@ -37,8 +28,8 @@ void LCD_Default_Init(I2C_LCD_Handler *lcd, I2C_HandleTypeDef *STM_H_I2C, uint8_
 	for(uint8_t address = 0x08; address <= 0x77; address++) // Valid 7bits I2C Addresses
 	    if(HAL_I2C_IsDeviceReady(STM_H_I2C, address << 1, 3, 50) == HAL_OK)
 			lcd->AddressAndBl = (address << 1) | LCD_Backlight_Mask;
-    LCD_Set_MaxColumns(lcd, nColumns);
-    LCD_Set_MaxLines(lcd, nLines);
+    LCD_Set_MaxColumns(lcd, --nColumns);
+    LCD_Set_MaxLines(lcd, --nLines);
 	lcd->cColsAndLines = 0x00;
 
 //- Wake Up Sequence
@@ -79,7 +70,7 @@ void LCD_Default_Init(I2C_LCD_Handler *lcd, I2C_HandleTypeDef *STM_H_I2C, uint8_
 
 void LCD_Set_Pos(I2C_LCD_Handler *lcd, uint8_t Column, uint8_t Line)
 {
-	if(Column >= (LCD_Get_MaxColumns(lcd)) || Line >= (LCD_Get_MaxLines(lcd)))
+	if(Column > (LCD_Get_MaxColumns(lcd)) || Line > (LCD_Get_MaxLines(lcd)))
 	    return; //Invalid Column | Line
 
     uint8_t address;
@@ -99,29 +90,15 @@ void LCD_Set_Pos(I2C_LCD_Handler *lcd, uint8_t Column, uint8_t Line)
     LCD_Send(lcd, (LCD_Set_DDRAM_Address | address), LCD_Command);
 }
 
-//- LCD_Set_Pos(0,0) & Undoes Any Shifts Made On The Screen
-void LCD_Set_Pos_Home(I2C_LCD_Handler *lcd)
-{
-    LCD_Send(lcd, LCD_Return_Home, LCD_Command);
-
-    HAL_Delay(2);
-
-    lcd->cColsAndLines = 0x00;
-}
-
-void LCD_Set_Pos_Column(I2C_LCD_Handler *lcd, uint8_t Column) {LCD_Set_Pos(lcd, Column, (LCD_Get_CurrentLine(lcd)));}
-
-void LCD_Set_Pos_Line(I2C_LCD_Handler *lcd, uint8_t Line) {LCD_Set_Pos(lcd, (LCD_Get_CurrentColumn(lcd)), Line);}
-
 //-- Writing Functions
 
 void LCD_Write_Char(I2C_LCD_Handler *lcd, char ch)
 {
     LCD_Send(lcd, ch, LCD_Text);
 
-    if ((1 + (LCD_Get_CurrentColumn(lcd))) >= (LCD_Get_MaxColumns(lcd)))
+    if (LCD_Get_CurrentColumn(lcd) >= LCD_Get_MaxColumns(lcd))
     {
-        if (((1 + LCD_Get_CurrentLine(lcd)) >= LCD_Get_MaxLines(lcd))) LCD_Set_CurrentLine(lcd, 0);
+        if (LCD_Get_CurrentLine(lcd) >= LCD_Get_MaxLines(lcd)) LCD_Set_CurrentLine(lcd, 0);
         else LCD_Set_CurrentLine(lcd, (1 + LCD_Get_CurrentLine(lcd)));
 
         LCD_Set_CurrentColumn(lcd, 0);
@@ -131,34 +108,51 @@ void LCD_Write_Char(I2C_LCD_Handler *lcd, char ch)
     else LCD_Set_CurrentColumn(lcd, (1 + LCD_Get_CurrentColumn(lcd)));
 }
 
-//- Fills A Specific Line Starting At A Specific Column With A Specific Character
-void LCD_Fill_Partial_Line(I2C_LCD_Handler *lcd, uint8_t line, uint8_t start, char ch)
+void LCD_Write_String(I2C_LCD_Handler *lcd, const char *str) {while (*str) LCD_Write_Char(lcd, *str++);}
+
+//- Converts Unsigned Integers Into Text For Exhibition
+void LCD_Write_Number(I2C_LCD_Handler *lcd, uint32_t Number)
 {
-    LCD_Set_Pos(lcd, start, line);
-    while ((LCD_Get_CurrentLine(lcd)) == line) LCD_Write_Char(lcd, ch);
+    uint8_t NumDigits = (Number < 10) ? 1 :
+                        (Number < 100) ? 2 :
+                        (Number < 1000) ? 3 :
+                        (Number < 10000) ? 4 :
+                        (Number < 100000) ? 5 :
+                        (Number < 1000000) ? 6 :
+                        (Number < 10000000) ? 7 :
+                        (Number < 100000000) ? 8 :
+                        (Number < 1000000000) ? 9 : 10;
+
+    uint8_t TxtSize = NumDigits + 1; //+1 For '\0'
+
+    char Txt[TxtSize];
+
+    uint8_t index = sizeof(Txt) - 1;
+
+    if(index>(((LCD_Get_MaxColumns(lcd))-(LCD_Get_CurrentColumn(lcd))))) return; //Num Is Too Big To Exhibit
+
+    Txt[index] = '\0';
+
+    do
+    {
+        Txt[--index] = '0' + (Number % 10);
+        Number /= 10;
+    }
+    while(Number);
+
+    LCD_Write_String(lcd, &Txt[index]);
 }
-
-//- Fills A Specific Line With A Specific Character
-void LCD_Fill_Line(I2C_LCD_Handler *lcd, uint8_t line, char ch) {LCD_Fill_Partial_Line(lcd, line, 0 , ch);}
-
-//- Fills The Entire Screen With A Specific Character
-void LCD_Fill_All(I2C_LCD_Handler *lcd, char ch) {for (uint8_t line = 0; line < (LCD_Get_MaxLines(lcd)); line++)LCD_Fill_Line(lcd, line, ch);}
 
 //- Clears A Line Starting At A Specific Column & Set_Pos(start,line)
 void LCD_Clear_Partial_Line(I2C_LCD_Handler *lcd, uint8_t line, uint8_t start)
 {
-    LCD_Fill_Partial_Line(lcd, line, start, ' ');
-
+    LCD_Set_Pos(lcd, start, line);
+    while ((LCD_Get_CurrentLine(lcd)) == line) LCD_Write_Char(lcd, ' ');
     LCD_Set_Pos(lcd, start, line);
 }
 
 //- Clears A Line & Set_Pos(0,line)
-void LCD_Clear_Line(I2C_LCD_Handler *lcd, uint8_t line)
-{
-    LCD_Fill_Line(lcd, line , ' ');
-
-    LCD_Set_Pos(lcd, 0, line);
-}
+void LCD_Clear_Line(I2C_LCD_Handler *lcd, uint8_t line) {LCD_Clear_Partial_Line(lcd, line, 0);}
 
 //- Clears ALL Text & Set_Pos(0,0)
 void LCD_Clear_All(I2C_LCD_Handler *lcd)
@@ -168,131 +162,4 @@ void LCD_Clear_All(I2C_LCD_Handler *lcd)
     HAL_Delay(2); //Required By DataSheet (Max ~2ms)
 
     lcd->cColsAndLines = 0x00;
-}
-
-void LCD_Write_String(I2C_LCD_Handler *lcd, const char *str) {while (*str) LCD_Write_Char(lcd, *str++);}
-
-//- Centralize & Writes a String
-void LCD_Write_C_String(I2C_LCD_Handler *lcd, const char *str)
-{
-	uint8_t Centrifying = ((LCD_Get_MaxColumns(lcd)))-((uint8_t)strlen(str));
-	LCD_Set_Pos_Column(lcd, Centrifying==0? 0 : (Centrifying>>1));
-	LCD_Write_String(lcd, str);
-}
-
-//- Converts Numbers Into Text For Exhibition
-void LCD_Write_Number(I2C_LCD_Handler *lcd, double Num, uint8_t DecimalPrecision)
-{
-	if(DecimalPrecision > 9)
-	    return; //Decimal Precision Is Too Big For uint32_t Conversion
-
-	uint8_t TxtSize = 0;
-
-    uint32_t Uint32Num = Num<0?
-    		(TxtSize++,(uint32_t)(-Num))
-    		:
-			(uint32_t)Num;
-
-    uint8_t Uint32NumDigits = 1;
-
-    for(uint32_t CountingDigits = Uint32Num ; CountingDigits >= 10; CountingDigits /= 10)
-        Uint32NumDigits++;
-
-     TxtSize += DecimalPrecision?
-		Uint32NumDigits + 1 + DecimalPrecision + 1
-		:
-		Uint32NumDigits + 1;
-
-    char Txt[TxtSize];
-
-    uint8_t index = sizeof(Txt) - 1;
-
-    if(index>(((LCD_Get_MaxColumns(lcd))-(LCD_Get_CurrentColumn(lcd)))))
-    	return; //Num Is Too Big To Exhibit
-
-    Txt[index] = '\0';
-
-    if(DecimalPrecision)
-    {
-        uint32_t Pow10[] =
-        {
-            1, 			// 0
-            10, 		// 1
-            100,		// 2
-            1000,		// 3
-            10000,		// 4
-            100000,		// 5
-            1000000,	// 6
-            10000000,	// 7
-            100000000,	// 8
-            1000000000 	// 9
-        }; // uint32_t Has Max Value Of 10 Digits
-
-        double decimal = Num<0?
-        		((-Num) - Uint32Num)
-				:
-				(Num - Uint32Num);
-
-        uint32_t dNum = (uint32_t)(decimal * Pow10[DecimalPrecision]);
-
-        for(uint8_t DecimalDigits = 0; DecimalDigits < DecimalPrecision; DecimalDigits++)
-        {
-            Txt[--index] = '0' + (dNum % 10);
-            dNum /= 10;
-        }
-
-        Txt[--index] = ',';
-    }
-
-    do
-    {
-        Txt[--index] = '0' + (Uint32Num % 10);
-        Uint32Num /= 10;
-    }
-    while(Uint32Num);
-
-    if (Num<0)
-    	Txt[--index] = '-';
-
-    LCD_Write_String(lcd, &Txt[index]);
-}
-
-//-- LCD Advanced Screen Manipulation Functions
-
-//- Any Funtion That Cannot Be Executed SingleHandedly By LCD_Send() (Needs MCU To Happen Properly)
-
-//- Scrolls The Screen Throughout The Entire DDRAM In Any Direction (Left Or Right) With A Delay Between Each Shift
-void LCD_Scroll_Shift(I2C_LCD_Handler *lcd, uint8_t Direction, uint32_t ShiftInterval)
-{
-	for(uint8_t column = 0; column < LCD_Max_Internal_DDRAM_nColumns; column++)
-	{
-		LCD_Send(lcd, (0x10 | 0x08 | Direction), LCD_Command);
-		HAL_Delay(ShiftInterval);
-	}
-}
-
-//- LCD_Scroll_Shift()>>1 + LCD_Clear_All()  (Will Only Work Visually On 16x2 LCDs, But Will Work On Any LCD)
-void LCD_Scroll_Disappear(I2C_LCD_Handler *lcd, uint8_t Direction, uint32_t ShiftInterval)
-{
-	for(uint8_t column = 0; column < (LCD_Max_Internal_DDRAM_nColumns>>1); column++)
-	{
-		LCD_Send(lcd, (0x10 | 0x08 | Direction), LCD_Command);
-		HAL_Delay(ShiftInterval);
-	}
-	LCD_Clear_All(lcd);
-}
-
-//- Writes A String With Delay In Each Char
-void LCD_Write_T_String(I2C_LCD_Handler *lcd, const char *str, uint32_t PlacingTime) {while (*str){LCD_Write_Char(lcd, *str++);HAL_Delay(PlacingTime);}}
-
-//- Centralize & Writes A T_String
-void LCD_Write_CT_String(I2C_LCD_Handler *lcd, const char *str, uint32_t PlacingTime)
-{
-	uint8_t Centrifying = (((LCD_Get_MaxColumns(lcd)))-((uint8_t)strlen(str)));
-	LCD_Set_Pos_Column(lcd, Centrifying==0? 0 : (Centrifying>>1));
-	while (*str)
-	{
-		LCD_Write_Char(lcd, *str++);
-		HAL_Delay(PlacingTime);
-	}
 }
