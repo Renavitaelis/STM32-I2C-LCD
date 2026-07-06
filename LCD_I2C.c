@@ -110,20 +110,23 @@ void LCD_Write_Char(I2C_LCD_Handler *lcd, char ch)
 
 void LCD_Write_String(I2C_LCD_Handler *lcd, const char *str) {while (*str) LCD_Write_Char(lcd, *str++);}
 
-//- Converts Unsigned Integers Into Text For Exhibition
-void LCD_Write_Number(I2C_LCD_Handler *lcd, uint32_t Number)
+//- Converts Integers Into Text For Exhibition
+void LCD_Write_Number(I2C_LCD_Handler *lcd, int32_t Number)
 {
-    uint8_t NumDigits = (Number < 10) ? 1 :
-                        (Number < 100) ? 2 :
-                        (Number < 1000) ? 3 :
-                        (Number < 10000) ? 4 :
-                        (Number < 100000) ? 5 :
-                        (Number < 1000000) ? 6 :
-                        (Number < 10000000) ? 7 :
-                        (Number < 100000000) ? 8 :
-                        (Number < 1000000000) ? 9 : 10;
+    uint32_t UnsignedNumber = (Number < 0) ? (uint32_t)-(Number) : (uint32_t)Number;
 
-    uint8_t TxtSize = NumDigits + 1; //+1 For '\0'
+    uint8_t NumDigits = (UnsignedNumber < 10) ? 1 :
+                        (UnsignedNumber < 100) ? 2 :
+                        (UnsignedNumber < 1000) ? 3 :
+                        (UnsignedNumber < 10000) ? 4 :
+                        (UnsignedNumber < 100000) ? 5 :
+                        (UnsignedNumber < 1000000) ? 6 :
+                        (UnsignedNumber < 10000000) ? 7 :
+                        (UnsignedNumber < 100000000) ? 8 :
+                        (UnsignedNumber < 1000000000) ? 9 : 10;
+
+    
+    uint8_t TxtSize = (Number < 0) ? 1 + NumDigits + 1 : NumDigits + 1; //+1 For '\0' And +1 For '-' If Negative
 
     char Txt[TxtSize];
 
@@ -135,10 +138,12 @@ void LCD_Write_Number(I2C_LCD_Handler *lcd, uint32_t Number)
 
     do
     {
-        Txt[--index] = '0' + (Number % 10);
-        Number /= 10;
+        Txt[--index] = '0' + (UnsignedNumber % 10);
+        UnsignedNumber /= 10;
     }
-    while(Number);
+    while(UnsignedNumber);
+
+    if (Number < 0) Txt[--index] = '-';
 
     LCD_Write_String(lcd, &Txt[index]);
 }

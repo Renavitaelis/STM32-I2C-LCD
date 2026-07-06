@@ -84,8 +84,8 @@ void LCD_Write_Char(I2C_LCD_Handler *lcd, char ch);
 
 void LCD_Write_String(I2C_LCD_Handler *lcd, const char *str);
 
-//- Converts Unsigned Integers Into Text For Exhibition
-void LCD_Write_Number(I2C_LCD_Handler *lcd, uint32_t Number);
+//- Converts Integers Into Text For Exhibition
+void LCD_Write_Number(I2C_LCD_Handler *lcd, int32_t Number);
 
 //- Clears A Line Starting At A Specific Column & Set_Pos(start,line)
 void LCD_Clear_Partial_Line(I2C_LCD_Handler *lcd, uint8_t line, uint8_t start);
