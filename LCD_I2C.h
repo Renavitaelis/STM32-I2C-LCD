@@ -32,10 +32,16 @@ typedef enum
 
 #define LCD_Max_Internal_DDRAM_nColumns 0x40
 
+#define LCD_SCROLL_FULL  LCD_Max_Internal_DDRAM_nColumns
+#define LCD_SCROLL_HALF  (LCD_Max_Internal_DDRAM_nColumns >> 1)
+
+#define LCD_Shift_Right 0x04
+#define LCD_Shift_Left 0x00
+
 //-- LCD Masks
 
-#define LCD_Line_Mask   0x07 
-#define LCD_Column_Mask 0xF8
+#define LCD_Line_Mask   0x03 
+#define LCD_Column_Mask 0xFC
 
 #define LCD_Address_Mask 0xFE
 #define LCD_Backlight_Mask 0x01
@@ -45,23 +51,23 @@ typedef enum
 #define LCD_Get_CurrentLine(pLCD)   ((pLCD)->cColsAndLines & LCD_Line_Mask)
 #define LCD_Get_MaxLines(pLCD)      ((pLCD)->nColsAndLines & LCD_Line_Mask)
 
-#define LCD_Get_CurrentColumn(pLCD) (((pLCD)->cColsAndLines & LCD_Column_Mask) >> 3)
-#define LCD_Get_MaxColumns(pLCD)    (((pLCD)->nColsAndLines & LCD_Column_Mask) >> 3)
+#define LCD_Get_CurrentColumn(pLCD) (((pLCD)->cColsAndLines & LCD_Column_Mask) >> 2)
+#define LCD_Get_MaxColumns(pLCD)    (((pLCD)->nColsAndLines & LCD_Column_Mask) >> 2)
 
 //-- LCD Handler Sets
 
-#define LCD_Set_CurrentColumn(pLCD, Column) ((pLCD)->cColsAndLines = ((pLCD)->cColsAndLines & LCD_Line_Mask) | (((Column) << 3) & LCD_Column_Mask))
+#define LCD_Set_CurrentColumn(pLCD, Column) ((pLCD)->cColsAndLines = ((pLCD)->cColsAndLines & LCD_Line_Mask) | (((Column) << 2) & LCD_Column_Mask))
 #define LCD_Set_CurrentLine(pLCD, Line)     ((pLCD)->cColsAndLines = ((pLCD)->cColsAndLines & LCD_Column_Mask) | ((Line) & LCD_Line_Mask))
 
-#define LCD_Set_MaxColumns(pLCD, Columns)   ((pLCD)->nColsAndLines = ((pLCD)->nColsAndLines & LCD_Line_Mask) | (((Columns) << 3) & LCD_Column_Mask))
+#define LCD_Set_MaxColumns(pLCD, Columns)   ((pLCD)->nColsAndLines = ((pLCD)->nColsAndLines & LCD_Line_Mask) | (((Columns) << 2) & LCD_Column_Mask))
 #define LCD_Set_MaxLines(pLCD, Lines)       ((pLCD)->nColsAndLines = ((pLCD)->nColsAndLines & LCD_Column_Mask) | ((Lines) & LCD_Line_Mask))
 
 typedef struct
 {
     I2C_HandleTypeDef *STM_I2C_Handler;     // I2C Handler For Communication
 
-    uint8_t nColsAndLines,				//Stores (nColumns) and (nLines) As 0xCCCCCLLL
-    		cColsAndLines,				//Stores (CurrentColumn) and (CurrentLine) As 0xCCCCCLLL 
+    uint8_t nColsAndLines,				//Stores (nColumns) and (nLines) As 0xCCCCCCLL
+    		cColsAndLines,				//Stores (CurrentColumn) and (CurrentLine) As 0xCCCCCCLL 
 			AddressAndBl;            	//Stores (I2C Address Of The LCD) And (BackLightState) As 0xAAAAAAAB
 
 }I2C_LCD_Handler;
@@ -90,11 +96,22 @@ void LCD_Set_Pos_Home(I2C_LCD_Handler *lcd);
 
 void LCD_Set_Pos_Column(I2C_LCD_Handler *lcd, uint8_t column);
 
+//- Sets Cursor Position To The Center Of A Given String Length
+void LCD_Set_Pos_Centered(I2C_LCD_Handler *lcd, const char *str);
+
 void LCD_Set_Pos_Line(I2C_LCD_Handler *lcd, uint8_t line);
 
 //-- Writing Functions
 
 void LCD_Write_Char(I2C_LCD_Handler *lcd, char ch);
+
+void LCD_Write_String(I2C_LCD_Handler *lcd, const char *str);
+
+//- Centralize & Writes A String
+void LCD_Write_C_String(I2C_LCD_Handler *lcd, const char *str);
+
+//- Converts Numbers Into Text For Exhibition
+void LCD_Write_Number(I2C_LCD_Handler *lcd, double num, uint8_t DecimalPrecision);
 
 //- Fills A Specific Line Starting At A Specific Column With A Specific Character
 void LCD_Fill_Partial_Line(I2C_LCD_Handler *lcd, uint8_t line, uint8_t start, char ch);
@@ -114,23 +131,12 @@ void LCD_Clear_Line(I2C_LCD_Handler *lcd, uint8_t line);
 //- Clears ALL Text & Set_Pos(0,0)
 void LCD_Clear_All(I2C_LCD_Handler *lcd);
 
-void LCD_Write_String(I2C_LCD_Handler *lcd, const char *str);
-
-//- Centralize & Writes A String
-void LCD_Write_C_String(I2C_LCD_Handler *lcd, const char *str);
-
-//- Converts Numbers Into Text For Exhibition
-void LCD_Write_Number(I2C_LCD_Handler *lcd, double num, uint8_t DecimalPrecision);
-
 //-- LCD Advanced Screen Manipulation Functions
 
 //- Any Funtion That Cannot Be Executed SingleHandedly By LCD_Send() (Needs MCU To Happen Properly)
 
-//- Scrolls The Screen Throughout The Entire DDRAM In Any Direction (Left Or Right) With A Delay Between Each Shift
-void LCD_Scroll_Shift(I2C_LCD_Handler *lcd, uint8_t Direction,  uint32_t ShiftInterval);
-
-//- LCD_Scroll_Shift()>>1 + LCD_Clear_All()  (Will Only Work Visually On 16x2 LCDs, But Will Work On Any LCD)
-void LCD_Scroll_Disappear(I2C_LCD_Handler *lcd, uint8_t Direction,  uint32_t ShiftInterval);
+//- Scrolls The Screen With Custom Steps & Optional Auto-Clear
+void LCD_Scroll_Shift(I2C_LCD_Handler *lcd, uint8_t Direction, uint8_t ShiftsCount, uint32_t ShiftInterval, uint8_t AutoClear);
 
 //- Writes A String With Delay In Each Char
 void LCD_Write_T_String(I2C_LCD_Handler *lcd, const char *str, uint32_t PlacingTime);
