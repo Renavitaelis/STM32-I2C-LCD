@@ -15,9 +15,10 @@ void LCD_Send(I2C_LCD_Handler *lcd, uint8_t CMD_Or_Txt, LCD_Type_Of_Data Type)
     for(uint8_t Data_Pulse = 0; Data_Pulse < 4 ; Data_Pulse++)
     	Data_Buffer[Data_Pulse] =
         ( ( (CMD_Or_Txt << (0x04 & Data_Pulse<<1) ) & 0xF0 ) | //- Changes Between The High ^ Low Nibble Of The CMD_Or_Txt
-        ((lcd->AddressAndBl&LCD_Backlight_Mask)<<3) | //- Backlight State
-        (((Data_Pulse&0x01)^0x01)<<2) | //- Changes En Pin Between High ^ Low
-        (Type&LCD_RS_On) ); //- Defines If The CMD_Or_Txt Is A Command Or A Text
+        (((lcd->AddressAndBl&LCD_Backlight_Mask)<<3)&LCD_BackLight_On) | //- Backlight State
+        ((((Data_Pulse&0x01)^0x01)<<2)&LCD_EN_On) | //- Changes En Pin Between High ^ Low
+        (LCD_RW_Off) | //-A Future LCD_Receive() Function Could Use Some Variation Of This To Read From The LCD, But For Now It Is Always Off
+        (Type&LCD_RS_On) ); //- Defines If The CMD_Or_Txt Is Command ^ Text
 
     LCD_Write_Bus(lcd, Data_Buffer, sizeof(Data_Buffer));
 }
@@ -27,6 +28,44 @@ void LCD_Set_Backlight(I2C_LCD_Handler *lcd, uint8_t mode)
     lcd->AddressAndBl = (lcd->AddressAndBl & LCD_Address_Mask) | (mode & LCD_Backlight_Mask);
     uint8_t BL_Updater = mode & LCD_Backlight_Mask;
     LCD_Write_Bus(lcd, &BL_Updater, sizeof(BL_Updater));
+}
+
+void LCD_Set_Expected_Data(I2C_LCD_Handler *lcd, uint8_t Mode, uint8_t Lines, uint8_t Font)
+{
+    LCD_Send(lcd, (LCD_Mod_Expected_Data | (Mode & LCD_8bits_Mode) | (Lines & LCD_2Line_Mode) | (Font & LCD_5x10_Font)), LCD_Command);
+    LCD_CMD_DELAY();
+}
+
+void LCD_Set_UI(I2C_LCD_Handler *lcd, uint8_t Display, uint8_t Cursor, uint8_t Blink)
+{
+    LCD_Send(lcd, (LCD_Mod_UI | (Display & LCD_Display_On) | (Cursor & LCD_Cursor_On) | (Blink & LCD_Blink_On)), LCD_Command);
+    LCD_CMD_DELAY();
+}
+
+void LCD_Set_Entry_Behavior(I2C_LCD_Handler *lcd, uint8_t Direction, uint8_t Shift)
+{
+    LCD_Send(lcd, (LCD_Mod_Entry | (Direction & LCD_Cursor_Move_Right) | (Shift & LCD_Display_Shift_Enable)), LCD_Command);
+    LCD_CMD_DELAY();
+}
+
+void LCD_Default_Init_Sequence(I2C_LCD_Handler *lcd)
+{
+	HAL_Delay(50); // Wait For LCD To Power-Up
+
+	for(uint8_t CPR = 0; CPR < 3; CPR++) LCD_Set_Expected_Data(lcd, LCD_8bits_Mode, LCD_1Line_Mode, LCD_5x8_Font);
+
+	LCD_Set_Expected_Data(lcd, LCD_4bits_Mode, LCD_1Line_Mode, LCD_5x8_Font);
+
+	LCD_Set_Expected_Data(lcd, LCD_4bits_Mode, LCD_2Line_Mode, LCD_5x8_Font);
+
+	LCD_Set_UI(lcd, LCD_Display_Off, LCD_Cursor_Off, LCD_Blink_Off);
+	
+    LCD_Send(lcd, LCD_Clear_Display, LCD_Command); // Since We're Not Writing Anything Yet, We Don't Need to Set lcd->cColsAndLines = 0x00 Again
+	HAL_Delay(2); //Required By DataSheet (max ~2ms)
+
+	LCD_Set_Entry_Behavior(lcd, LCD_Cursor_Move_Right, LCD_Display_Shift_Disable);
+	
+    LCD_Set_UI(lcd, LCD_Display_On, LCD_Cursor_Off, LCD_Blink_Off);
 }
 
 //- Useful For Most Cases, Create More As Needed
@@ -40,36 +79,7 @@ void LCD_Default_Init(I2C_LCD_Handler *lcd, I2C_HandleTypeDef *STM_H_I2C, uint8_
     LCD_Set_MaxLines(lcd, --nLines);
 	lcd->cColsAndLines = 0x00;
 
-//- Wake Up Sequence
-	HAL_Delay(50); // Wait For LCD To Power-Up
-
-	for(uint8_t CPR = 0; CPR < 3; CPR++) // Does "CPR" On The LCD Hoping It Will Begin Receiving Data
-	{
-		LCD_Send(lcd, 0x20|0x10, LCD_Command); //LCD_Mod_Expected_Data|LCD_8bits_Mode|LCD_1Line_Mode|LCD_5x8_Font
-		HAL_Delay(1); // "Compression Rhythm"
-	}
-
-	LCD_Send(lcd, 0x20, LCD_Command); // LCD_Mod_Expected_Data|LCD_4bits_Mode|LCD_1Line_Mode|LCD_5x8_Font
-	HAL_Delay(1);
-
-//- Function Set
-	LCD_Send(lcd, 0x20|0x08, LCD_Command); // LCD_Mod_Expected_Data|LCD_4bits_Mode|LCD_2Line_Mode|LCD_5x8_Font
-	HAL_Delay(1);
-
-//- Display Off
-	LCD_Send(lcd, 0x08, LCD_Command); //LCD_Mod_UI|LCD_Display_Off|LCD_Cursor_Off|LCD_Blink_Off
-
-//- Clear Display
-	LCD_Send(lcd, LCD_Clear_Display, LCD_Command);
-	HAL_Delay(2); //Required By DataSheet (max ~2ms)
-
-//- Entry Mode Set
-	LCD_Send(lcd, 0x04|0x02, LCD_Command); // LCD_Mod_Entry|LCD_Cursor_Move_Right|LCD_Display_Shift_Disable
-	HAL_Delay(1);
-
-//- Display ON
-	LCD_Send(lcd, 0x08|0x04, LCD_Command); // LCD_Mod_UI|LCD_Display_On|LCD_Cursor_Off|LCD_Blink_Off
-	HAL_Delay(1);
+    LCD_Default_Init_Sequence(lcd);
 }
 
 //--- User Focused Functions
@@ -133,8 +143,8 @@ void LCD_Write_Char(I2C_LCD_Handler *lcd, char ch)
 
     if (LCD_Get_CurrentColumn(lcd) > LCD_Get_MaxColumns(lcd))
     {
-        if (LCD_Get_CurrentLine(lcd) > LCD_Get_MaxLines(lcd)) LCD_Set_CurrentLine(lcd, 0);
-        else LCD_Set_CurrentLine(lcd, (1 + LCD_Get_CurrentLine(lcd)));
+        (LCD_Get_CurrentLine(lcd) > LCD_Get_MaxLines(lcd))?
+        LCD_Set_CurrentLine(lcd, 0) : LCD_Set_CurrentLine(lcd, (1 + LCD_Get_CurrentLine(lcd)));
 
         LCD_Set_CurrentColumn(lcd, 0);
 
